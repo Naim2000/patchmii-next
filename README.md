@@ -1,5 +1,5 @@
 # patchmii-next
+todo:
 
-todo: ```c
-typedef int (*content_patcher)(unsigned int cid, void* buffer, size_t length)
-```
+    typedef int (*content_patcher)(unsigned int cid, void* buffer, size_t length)
+
