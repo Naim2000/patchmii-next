@@ -31,7 +31,7 @@ int TCP_socket() {
 		return ret;
 	}
 
-	ret = net_fcntl(socket, F_SETFL, 0x4);
+	ret = net_fcntl(socket, F_SETFL, ret | 0x4);
 	if (ret < 0) {
 		error_log("net_fcntl(F_SETFL) failed (%d)", ret);
 		net_close(socket);
