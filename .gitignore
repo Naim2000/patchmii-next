@@ -1,0 +1,4 @@
+build/
+patchmii-next.a
+*.dol
+*.elf
