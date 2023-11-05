@@ -36,11 +36,11 @@ int HTTP_request(const char* hostname, const char* path, void** buffer, size_t* 
 			break;
 
 	//	debug_log("TCP_readln gave me %s", line);
-		if (sscanf(line, "HTTP/1.%*u %u", &status))
-			debug_log("Read status code: %u", status);
+		if (sscanf(line, "HTTP/1.%*u %u", &status));
+		//	debug_log("Read status code: %u", status);
 
-		else if (sscanf(line, "Content-Length: %u", size))
-			debug_log("Read content length: %u", *size);
+		else if (sscanf(line, "Content-Length: %u", size));
+		//	debug_log("Read content length: %u", *size);
 	}
 
 	if (status != 200) {

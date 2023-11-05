@@ -19,15 +19,6 @@
 
 const aeskey wii_ckey = {0xEB, 0xE4, 0x2A, 0x22, 0x5E, 0x85, 0x93, 0xE4, 0x48, 0xD9, 0xC5, 0x45, 0x73, 0x81, 0xAA, 0xF7};
 
-static char* sha1hashstr(sha1 hash) {
-	static char str[(2 * sizeof(sha1)) + 1];
-	char* _str = str;
-	for (int i = 0; i < sizeof(sha1); i++)
-		_str += sprintf(_str, "%02x", hash[i]);
-
-	return str;
-}
-
 int NUS_Download(u64 tid, const char* obj, void** buffer, size_t* size) {
 	char path[80];
 	sprintf(path, "/ccs/download/%016llx/%s", tid, obj);
@@ -47,7 +38,7 @@ static bool fakesign(signed_blob* s_tik, signed_blob* s_tmd) {
 
 		tik* p_tik = SIGNATURE_PAYLOAD(s_tik);
 		for (p_tik->padding = 0; p_tik->padding < (1 << 16) - 1; p_tik->padding++) {
-			SHA1((void*)p_tik, sizeof(tik), hash);
+			SHA1(hash, (void*)p_tik, sizeof(tik));
 			if (!hash[0]) break;
 		}
 		if (hash[0]) return false;
@@ -58,7 +49,7 @@ static bool fakesign(signed_blob* s_tik, signed_blob* s_tmd) {
 
 		tmd* p_tmd = SIGNATURE_PAYLOAD(s_tmd);
 		for (p_tmd->fill3 = 0; p_tmd->fill3 < (1 << 16) - 1; p_tmd->fill3++) {
-			SHA1((void*)p_tmd, TMD_SIZE(p_tmd), hash);
+			SHA1(hash, (void*)p_tmd, TMD_SIZE(p_tmd));
 			if (!hash[0]) break;
 		}
 		if (hash[0]) return false;
@@ -103,7 +94,7 @@ static int purge_title(u64 tid) {
 
 int PatchMii_Install(u64 tid, int version, u64 tid_new, u8 ios_new) {
 	int ret;
-	char obj[10], path[0x40];
+	char obj[10], path[0x40], *_path = path;
 	size_t certs_size = 0xA00, tmd_size = 0, tik_size = 0;
 	signed_blob *certs = NULL,
 				*s_tmd = NULL,
@@ -115,21 +106,28 @@ int PatchMii_Install(u64 tid, int version, u64 tid_new, u8 ios_new) {
 	struct AES_ctx tkey, title;
 	aeskey title_key, iv;
 
-	if (!forge && (version_installed > 0) && version_installed == version)
-		return EEXIST;
-
+	if (!forge && (version_installed > 0) && version_installed == version) {
+		ret = EEXIST;
+		goto finish;
+	}
 	ret = FS_Read("/sys/cert.sys", (unsigned char**)&certs, &certs_size, NULL);
 	if (ret < 0)
-		return ret;
+		goto finish;
 
-	ret = ISFS_CreateDir(TMP_DIR, 0, 3, 1, 1);
-	if (ret < 0)
-		return ret;
-
-	sprintf(path, "%s/%016llx", TMP_DIR, tid_new ? tid_new : tid);
+	_path += sprintf(_path, "%s", TMP_DIR);
 	ret = ISFS_CreateDir(path, 0, 3, 1, 1);
 	if (ret < 0)
-		return ret;
+		goto finish;
+
+	_path += sprintf(_path, "/%08x", (u32)(tid >> 32));
+	ret = ISFS_CreateDir(path, 0, 3, 1, 1);
+	if (ret < 0)
+		goto finish;
+
+	_path += sprintf(_path, "/%08x", (u32)tid);
+	ret = ISFS_CreateDir(path, 0, 3, 1, 1);
+	if (ret < 0)
+		goto finish;
 
 	if (version > 0)
 		sprintf(obj, "tmd.%hu", version);
@@ -138,19 +136,24 @@ int PatchMii_Install(u64 tid, int version, u64 tid_new, u8 ios_new) {
 
 	ret = NUS_Download(tid, obj, (void**)&s_tmd, &tmd_size);
 	if (ret < 0)
-		return ret;
+		goto finish;
 
 	p_tmd = SIGNATURE_PAYLOAD(s_tmd);
 	version = p_tmd->title_version;
+//	if (!forge && version == version_installed) {
+//		ret = EEXIST;
+//		goto finish;
+//	}
 
 	sprintf(obj, "cetk");
 	ret = NUS_Download(tid, obj, (void**)&s_tik, &tik_size);
 	if (ret < 0)
-		return ret;
+		goto finish;
 
 	p_tik = SIGNATURE_PAYLOAD(s_tik);
 
 	memcpy(title_key, p_tik->cipher_title_key, sizeof(aeskey));
+	memset(iv, 0, sizeof(aeskey));
 	*(u64*)iv = p_tik->titleid;
 
 	AES_init_ctx_iv(&tkey, wii_ckey, iv);
@@ -177,9 +180,8 @@ int PatchMii_Install(u64 tid, int version, u64 tid_new, u8 ios_new) {
 	for (u16 i = 0; i < p_tmd->num_contents; i++) {
 		struct _tmd_content* content = p_tmd->contents + i;
 		unsigned char* buffer = NULL;
-		u32 cid = content->cid, _csize = 0;
-		sha1 hash;
-		unsigned char* tmdhash = content->hash;
+		u32 cid = content->cid, csize = content->size, _csize = 0;
+		sha1 hash = {};
 
 		sprintf(obj, "%08x", cid);
 		ret = NUS_Download(tid, obj, (void**)&buffer, &_csize);
@@ -190,50 +192,56 @@ int PatchMii_Install(u64 tid, int version, u64 tid_new, u8 ios_new) {
 		*(u16*)iv = i;
 		AES_ctx_set_iv(&title, iv);
 		AES_CBC_decrypt_buffer(&title, buffer, _csize);
-		SHA1(buffer, _csize, hash);
-		if (memcmp(hash, tmdhash, sizeof(sha1)) != 0) {
-			error_log("Hash mismatch!");
-			OSReport("Computated hash: %s", sha1hashstr(hash));
-			OSReport("TMD hash       : %s", sha1hashstr(tmdhash));
-		//	free(buffer);
-		//	ret = -101022;
-		//	break;
+		OSReport("%08x: csize=%u, _csize=%u", cid, csize, _csize);
+		SHA1(hash, buffer, csize);
+		if (memcmp(hash, content->hash, sizeof(sha1)) != 0) {
+			error_log("\n%08x: Hash mismatch!", cid);
+			free(buffer);
+			ret = -101022;
+			break;
 		}
 	//	if (callback && callback(cid, buffer, _csize)) {
 	//		forge++;
-	//		debug_log("patched content %08x, recalculating hash.", cid);
-	//		SHA1(buffer, _csize, hash);
-	//		memcpy(tmdhash, hash, sizeof(sha1));
+	//		error_log("Patched content %08x, recalculating hash...", cid);
+	//		SHA1(hash, buffer, _csize);
+	//		memcpy(content->hash, hash, sizeof(sha1));
 	//	}
 
-		sprintf(strrchrnul(path, '/'), "/%08x.app", cid);
+		sprintf(_path, "/%08x.app", cid);
 		ret = FS_Write(path, buffer, _csize, true, NULL);
 		free(buffer);
 		if (ret < 0)
 			break;
 	}
 
-	if (forge && !fakesign(s_tik, s_tmd)) return -1030002011;
+	if (ret < 0)
+		goto finish;
+
+	if (forge && !fakesign(s_tik, s_tmd)) {
+		ret = -1030002011;
+		goto finish;
+	}
 
 	if (forge || (version_installed > version)) {
 		ret = purge_title(tid_new ? tid_new : tid);
 		if (ret < 0)
-			return ret;
+			goto finish;
 	}
 
 
 	ret = ES_AddTicket(s_tik, STD_SIGNED_TIK_SIZE, certs, certs_size, NULL, 0);
 	if (ret < 0)
-		return ret;
+		goto finish;
 
 	ret = ES_AddTitleStart(s_tmd, SIGNED_TMD_SIZE(s_tmd), certs, certs_size, NULL, 0);
 	if (ret < 0)
-		return ret;
+		goto finish;
 
 	for (u16 i = 0; i < p_tmd->num_contents; i++) {
 		struct _tmd_content* content = p_tmd->contents + i;
 		void* buffer = NULL;
 		u32 cid = content->cid, _csize = 0;
+		sha1 hash; // _._
 
 		ret = ES_AddContentStart(p_tmd->title_id, cid);
 		if (ret < 0)
@@ -241,10 +249,12 @@ int PatchMii_Install(u64 tid, int version, u64 tid_new, u8 ios_new) {
 
 		int cfd = ret;
 
-		sprintf(strrchrnul(path, '/'), "/%08x.app", cid);
-		ret = FS_Read(path, &buffer, &_csize, NULL);
+		sprintf(_path, "/%08x.app", cid);
+		ret = FS_Read(path, (unsigned char**)&buffer, &_csize, NULL);
 		if (ret < 0)
 			break;
+
+		SHA1(hash, buffer, content->size);
 
 		memset(iv, 0, sizeof(aeskey));
 		*(u16*)iv = i;
@@ -263,6 +273,7 @@ int PatchMii_Install(u64 tid, int version, u64 tid_new, u8 ios_new) {
 	if (ret < 0)
 		ES_AddTitleCancel();
 
+finish:
 	free(certs);
 	free(s_tmd);
 	free(s_tik);

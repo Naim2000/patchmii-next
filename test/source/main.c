@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
 	// This positions the cursor on row 2, column 0
 	// we can use variables for this with format codes too
 	// e.g. printf ("\x1b[%d;%dH", row, column );
-	printf("\x1b[2;0H");
+//	printf("\x1b[2;0H");
 	printf("Hello World!\n");
 
 	int dolphin_fd;
@@ -80,8 +80,7 @@ int main(int argc, char **argv) {
 		ret = IosPatch_RUNTIME(true, false, true, false);
 		if (ret < 0) {
 			printf("failed!");
-			while (!SYS_ResetButtonDown()) VIDEO_WaitVSync();
-			exit(ret);
+			goto error;
 		}
 		printf("ok!\n");
 	}
@@ -107,5 +106,5 @@ error:
 	while (!SYS_ResetButtonDown())
 		VIDEO_WaitVSync();
 
-	return 0;
+	return ret;
 }
