@@ -1,18 +1,16 @@
-#include "quickhttp.h"
+#include "tcp.h"
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>
 #include <ogc/lwp_watchdog.h>
-#include <fcntl.h>
 #include <network.h>
+#include <fcntl.h>
 
-#include "timeout.h"
 #include "misc.h"
+#include "timeout.h"
 
-#define CRLF "\r\n"
 #define TCP_BLOCKSIZE 0x800
 
 int TCP_socket() {
@@ -43,23 +41,28 @@ int TCP_socket() {
 
 int TCP_connect(const char* hostname, uint16_t port) {
 	int ret = 0;
+	struct hostent* host = NULL;
+	static struct hostent cached_host = {};
+	static const char* last_hostname = NULL;
 
-	struct hostent* host = net_gethostbyname(hostname);
-	if (!host) {
-		error_log("couldn't find out who %s is (errno=%d)", hostname, errno);
-		return errno;
+	if (last_hostname && (hostname == last_hostname || !strcmp(hostname, last_hostname))) host = &cached_host;
+	else {
+		host = net_gethostbyname(hostname);
+		if (!host) {
+			error_log("net_gethostbyname(%s) failed\n\"%s\"", hostname, strerror(errno));
+			return -errno;
+		}
+		last_hostname = hostname;
+		cached_host = *host;
 	}
+
 
 	int socket = TCP_socket();
 	if (socket < 0) return socket;
 
 	struct sockaddr_in sockaddr = {
-		.sin_family = PF_INET,
-		.sin_len = sizeof(sockaddr),
-		.sin_port = htons(port),
-		.sin_addr = {
-			.s_addr = *(uint32_t*)(host->h_addr_list[0])
-		}
+		sizeof(sockaddr), PF_INET, htons(port),
+		{ *(uint32_t*)(host->h_addr_list[0]) }
 	};
 
 	set_timeout(10);
@@ -181,66 +184,4 @@ int TCP_write(int socket, void* buffer, size_t length) {
 	}
 
 	return 0;
-}
-
-struct HTTP_response HTTP_request(const char* hostname, const char* path) {
-	int ret = 0;
-	struct HTTP_response res = {
-		.status		= 404,
-		.buffer		= NULL,
-		.len 		= 0
-	};
-
-	ret = TCP_connect(hostname, 80);
-	if (ret < 0) {
-		error_log("TCP_connect failed (%d)", ret);
-		return res;
-	}
-	int socket = ret;
-
-	char request_header[0x200] = {};
-	int len = sprintf(request_header,
-			"GET %s HTTP/1.1" CRLF
-			"Host: %s" CRLF
-			"Cache-Control: no-cache" CRLF CRLF,
-			path, hostname);
-
-	ret = TCP_write(socket, request_header, len);
-	if (ret < 0) {
-		error_log("TCP_write failed (%d)", ret);
-		return res;
-	}
-
-	for (int i = 0; i < 0x20; i++) { // TODO: why 32 lines
-		char line[0x80] = {};
-		ret = TCP_readln(socket, line, sizeof(line));
-		if (ret < 0)
-			res.status = 408;
-
-		if (ret <= 0)
-			break;
-
-		debug_log("TCP_readln gave me %s", line);
-		if (sscanf(line, "HTTP/1.%*u %u", &res.status))
-			debug_log("Read status code: %u", res.status);
-
-		else if (sscanf(line, "Content-Length: %u", &res.len))
-			debug_log("Read content length: %u", res.len);
-	}
-
-	if (res.status == 200) {
-		res.buffer = memalign(0x20, res.len);
-		if (res.buffer) {
-			ret = TCP_read(socket, res.buffer, res.len);
-			if (ret < 0) {
-				free(res.buffer);
-				res.buffer = NULL;
-				res.status = ret;
-			}
-		}
-		else res.status = 413;
-	}
-
-	net_close(socket);
-	return res;
 }

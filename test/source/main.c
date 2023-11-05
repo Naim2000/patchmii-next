@@ -1,14 +1,29 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <stdint.h>
 #include <errno.h>
 #include <gccore.h>
+#include <gctypes.h>
 #include <ogc/isfs.h>
 #include <network.h>
 #include <wiiuse/wpad.h>
 #include <runtimeiospatch.h>
 
-int PatchMii_Install(const uint64_t, int, const uint64_t, uint32_t);
+typedef enum :u64{
+	System = 0x00000001,
+	DiscGame = 0x00010000,
+	Channel = 0x00010001,
+	SystemChannel = 0x00010002,
+	DiscGameChannel = 0x00010004,
+	HiddenChannel = 0x00010008,
+} TitleType;
+
+[[gnu::const]] u64 tid_full(TitleType hi, u32 lo) {
+	return (hi << 32) | lo;
+}
+
+int PatchMii_Install(const u64, int, const u64, u32);
 
 static void *xfb = NULL;
 static GXRModeObj *rmode = NULL;
@@ -52,21 +67,25 @@ int main(int argc, char **argv) {
 
 //	ISFS_Initialize();
 
-
 	// The console understands VT terminal escape codes
 	// This positions the cursor on row 2, column 0
 	// we can use variables for this with format codes too
 	// e.g. printf ("\x1b[%d;%dH", row, column );
 	printf("\x1b[2;0H");
 	printf("Hello World!\n");
-	printf("applying IOS patches... ");
-	ret = IosPatch_FULL(true, false, true, false, 58);
-	if (ret < 0) {
-		printf("failed!");
-		while (!SYS_ResetButtonDown()) VIDEO_WaitVSync();
-		exit(ret);
+
+	int dolphin_fd;
+	IOS_Close((dolphin_fd = IOS_Open("/dev/dolphin", 0)));
+	if (dolphin_fd < 0) {
+		printf("applying IOS patches... ");
+		ret = IosPatch_RUNTIME(true, false, true, false);
+		if (ret < 0) {
+			printf("failed!");
+			while (!SYS_ResetButtonDown()) VIDEO_WaitVSync();
+			exit(ret);
+		}
+		printf("ok!\n");
 	}
-	printf("ok!\n");
 	ISFS_Initialize();
 
 	printf("Initializing network... ");
@@ -77,14 +96,17 @@ int main(int argc, char **argv) {
 	}
 	if (ret < 0) {
 		printf("failed!");
-		while (!SYS_ResetButtonDown()) VIDEO_WaitVSync();
-		exit(ret);
+		goto error;
 	}
 	printf("ok!\n");
 
-	ret = PatchMii_Install(0x10002LL<<32 | 0x48415941, -1, 0x10002LL<<32 | 0x48414141, 0);
+	ret = PatchMii_Install(
+			tid_full(HiddenChannel, 0x4843434A), -1, 0, 0);
 	printf("PatchMii_Install returned %d", ret);
-	while (!SYS_ResetButtonDown()) VIDEO_WaitVSync();
+
+error:
+	while (!SYS_ResetButtonDown())
+		VIDEO_WaitVSync();
 
 	return 0;
 }
