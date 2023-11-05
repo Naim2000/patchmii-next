@@ -77,7 +77,6 @@ int TCP_connect(const char* hostname, uint16_t port) {
 
 		if (!ret || ret == -EISCONN) break;
 		else if (ret == -EINPROGRESS || ret == -EALREADY) {
-			debug_log("hurry up net_connect...");
 			sleep(1);
 			continue;
 		}
@@ -103,7 +102,6 @@ int TCP_readln(int socket, char* buffer, size_t maxlen) {
 		int ret = net_read(socket, buffer + c, 1);
 
 		if (!ret || ret == -EAGAIN) {
-			debug_log("going again...");
 			sleep(1);
 			continue;
 		}
@@ -135,7 +133,6 @@ int TCP_read(int socket, void* buffer, size_t length) {
 
 		int ret = net_read(socket, buffer + total, MAXIMUM(TCP_BLOCKSIZE, length - total));
 		if (!ret || ret == -EAGAIN) {
-			debug_log("going again...");
 			sleep(1);
 			continue;
 		}
@@ -172,7 +169,6 @@ int TCP_write(int socket, void* buffer, size_t length) {
 
 		int ret = net_write(socket, buffer + total, MAXIMUM(TCP_BLOCKSIZE, length - total));
 		if (!ret || ret == -EAGAIN) {
-			debug_log("going again...");
 			sleep(1);
 			continue;
 		}

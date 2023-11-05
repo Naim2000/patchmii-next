@@ -9,8 +9,9 @@
 #include <network.h>
 #include <wiiuse/wpad.h>
 #include <runtimeiospatch.h>
+#include <patchmii-next.h>
 
-typedef enum :u64{
+typedef enum: u64 {
 	System = 0x00000001,
 	DiscGame = 0x00010000,
 	Channel = 0x00010001,
@@ -19,11 +20,9 @@ typedef enum :u64{
 	HiddenChannel = 0x00010008,
 } TitleType;
 
-[[gnu::const]] u64 tid_full(TitleType hi, u32 lo) {
+[[gnu::pure]] u64 tid_full(TitleType hi, u32 lo) {
 	return (hi << 32) | lo;
 }
-
-int PatchMii_Install(const u64, int, const u64, u32);
 
 static void *xfb = NULL;
 static GXRModeObj *rmode = NULL;
